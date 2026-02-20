@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="en" class="transition-colors duration-300 scroll-smooth">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Movie Recommender</title>
+
+  <script>
+    const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+    const savedTheme = localStorage.getItem("theme") || (prefersDark ? "dark" : "light");
+    if (savedTheme === "dark") {
+      document.documentElement.classList.add("dark");
+    }
+  </script>
+
+  <script>
+    tailwind.config = {
+      darkMode: 'class'
+    }
+  </script>
+  <script src="https://cdn.tailwindcss.com"></script>
+
+  <style>
+    ::-webkit-scrollbar {
+      width: 8px;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: rgba(255, 255, 255, 0.2);
+      border-radius: 4px;
+    }
+  </style>
+</head>
+<body class="bg-gray-100 dark:bg-gray-900 text-gray-900 dark:text-gray-100">
+
+  <div id="loading-overlay" class="fixed inset-0 bg-white/80 dark:bg-black/80 flex items-center justify-center hidden z-50">
+    <div class="animate-spin rounded-full h-16 w-16 border-t-4 border-blue-500 border-opacity-75"></div>
+  </div>
+
+  <div class="flex justify-between items-center p-4">
+    <label class="inline-flex items-center cursor-pointer">
+      <span id="themeIcon" class="mr-2 text-2xl">🌙</span>
+      <input type="checkbox" id="themeToggle" class="sr-only peer">
+      <div class="w-11 h-6 bg-gray-300 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-blue-500 dark:bg-gray-700 rounded-full peer peer-checked:bg-blue-600 transition relative">
+        <div class="absolute top-0.5 left-0.5 bg-white dark:bg-gray-200 w-5 h-5 rounded-full transition-all peer-checked:translate-x-full"></div>
+      </div>
+    </label>
+    <select id="sortSelect" class="bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 text-sm rounded px-2 py-1">
+      <option value="title">Sort by Title</option>
+      <option value="rating">Sort by Rating</option>
+      <option value="genre">Sort by Genre</option>
+      <option value="year">Sort by Year</option>
+    </select>
+  </div>
+
+  <div class="container mx-auto px-4 lg:ml-80">
+    <h1 class="text-3xl font-bold text-center mt-2 mb-4">🎬 Movie Recommender System</h1>
+    <p class="text-center mb-2">This app uses collaborative filtering (ALS model in PySpark) to recommend movies tailored to each user.</p>
+    <p class="text-center text-sm text-gray-600 dark:text-gray-400 mb-4">📌 Enter a User ID between <strong>1 and 943</strong></p>
+
+    <form method="POST" class="flex justify-center mb-6">
+      <input type="text" name="user_id" id="user_id" placeholder="e.g., 1" required
+             class="rounded-l px-4 py-2 w-48 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-black dark:text-white">
+      <input type="submit" value="Get Recommendations"
+             class="rounded-r px-4 py-2 bg-blue-600 text-white hover:bg-blue-700">
+    </form>
+
+    {% if error %}
+      <p class="text-red-600 text-center font-semibold mb-4">{{ error }}</p>
+    {% endif %}
+
+    {% if rated_movies and rated_movies|length > 0 %}
+    <div class="fixed left-0 top-0 h-full w-72 bg-white dark:bg-gray-800 shadow-lg overflow-y-auto z-40 p-4">
+      <h2 class="text-lg font-semibold mb-3">🎟️ Movies You Rated</h2>
+      <table class="w-full text-sm">
+        <thead>
+          <tr><th class="text-left">Title</th><th class="text-right">⭐</th></tr>
+        </thead>
+        <tbody>
+          {% for rec in rated_movies %}
+          <tr class="border-t border-gray-200 dark:border-gray-600">
+            <td>{{ rec.title }}</td>
+            <td class="text-right">{{ rec.rating }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% endif %}
+
+    {% if recommendations %}
+    <div class="animate-fade-in opacity-0 animate-fade-in-start">
+      <h2 class="text-2xl font-semibold text-center my-4">🎯 Top Movie Recommendations</h2>
+      <div class="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
+        {% for rec in recommendations %}
+        <div class="rounded-lg border border-white/10 bg-white/10 backdrop-blur-sm shadow-lg hover:shadow-xl transition"
+             data-id="{{ rec.id }}" data-title="{{ rec.title }}" data-rating="{{ rec.predicted_rating }}" data-year="{{ rec.year }}" data-genre="{{ rec.genre }}">
+          {% if rec.banner %}
+          <a href="{{ rec.trailer }}" target="_blank" rel="noopener noreferrer">
+            <img src="{{ rec.banner }}" alt="Poster"
+              class="rounded-t-lg w-full h-60 object-cover transition-transform duration-300 hover:scale-105" />
+          </a>
+          {% else %}
+          <div class="w-full h-60 flex items-center justify-center bg-gray-300 dark:bg-gray-700 rounded-t-lg">
+            <span class="text-sm text-gray-600 dark:text-gray-300">🎞️ No Image Available</span>
+          </div>
+          {% endif %}
+          <div class="p-4">
+            <div class="flex justify-between items-center">
+              <h3 class="text-lg font-bold mb-1">{{ rec.title }}</h3>
+              <button onclick="toggleFavorite(this, '{{ rec.id }}')" class="favorite-btn text-xl" aria-label="Toggle favorite">🤍</button>
+
+            </div>
+            <div class="mb-1">
+              <span class="text-xs bg-blue-100 text-blue-600 dark:bg-blue-900 dark:text-blue-300 rounded px-2 py-0.5 mr-1">{{ rec.genre or 'Drama' }}</span>
+            </div>
+            <p class="mb-2">
+              {% for i in range(1, 6) %}
+                {% if rec.predicted_rating >= i %}
+                  <span class="text-yellow-400">★</span>
+                {% else %}
+                  <span class="text-gray-400">☆</span>
+                {% endif %}
+              {% endfor %}
+              <small class="ml-1 text-sm text-gray-600 dark:text-gray-400">
+                ({{ "%.2f"|format(rec.predicted_rating) }})
+              </small>
+            </p>
+            {% if rec.trailer %}
+            <a href="{{ rec.trailer }}" target="_blank" class="text-sm text-blue-600 dark:text-blue-400 hover:underline">▶ Watch Trailer</a>
+            {% else %}
+            <p class="text-sm text-gray-400 italic">No trailer found</p>
+            {% endif %}
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
+  </div>
+
+  <button onclick="window.scrollTo({ top: 0, behavior: 'smooth' })"
+    class="fixed bottom-6 right-6 bg-blue-600 text-white p-4 rounded-full shadow-lg hover:bg-blue-700 text-lg">
+    ⬆️
+  </button>
+
+  <script>
+    const toggle = document.getElementById("themeToggle");
+    const icon = document.getElementById("themeIcon");
+
+    function applyTheme(theme) {
+      document.documentElement.classList.toggle("dark", theme === "dark");
+      icon.textContent = theme === "dark" ? "☀️" : "🌙";
+      toggle.checked = theme === "dark";
+      localStorage.setItem("theme", theme);
+    }
+
+    toggle.addEventListener("change", () => applyTheme(toggle.checked ? "dark" : "light"));
+    applyTheme(savedTheme);
+
+    document.querySelector("form").addEventListener("submit", () => {
+      document.getElementById("loading-overlay").classList.remove("hidden");
+    });
+
+    window.addEventListener("load", () => {
+      const fadeContainer = document.querySelector(".animate-fade-in");
+      if (fadeContainer) {
+        fadeContainer.classList.remove("opacity-0");
+        fadeContainer.classList.add("opacity-100", "transition-opacity", "duration-1000");
+      }
+      renderFavorites();
+    });
+
+    document.getElementById("sortSelect").addEventListener("change", e => {
+      const type = e.target.value;
+      const cards = Array.from(document.querySelectorAll("[data-id]"));
+      const sorted = cards.sort((a, b) => {
+        if (type === "title") return a.dataset.title.localeCompare(b.dataset.title);
+        if (type === "rating") return b.dataset.rating - a.dataset.rating;
+        if (type === "genre") return a.dataset.genre.localeCompare(b.dataset.genre);
+        if (type === "year") return parseInt(b.dataset.year || 0) - parseInt(a.dataset.year || 0);
+      });
+      const container = document.querySelector(".grid");
+      container.innerHTML = "";
+      sorted.forEach(card => container.appendChild(card));
+      renderFavorites();
+    });
+
+    let favorites = JSON.parse(localStorage.getItem('favorites') || '[]');
+
+function toggleFavorite(button, id) {
+  if (favorites.includes(id)) {
+    favorites = favorites.filter(f => f !== id);
+  } else {
+    favorites.push(id);
+  }
+  localStorage.setItem('favorites', JSON.stringify(favorites));
+  button.textContent = favorites.includes(id) ? '❤️' : '🤍';
+}
+
+function renderFavorites() {
+  document.querySelectorAll('[data-id]').forEach(card => {
+    const id = card.dataset.id;
+    const heart = card.querySelector('.favorite-btn');
+    if (heart) {
+      heart.textContent = favorites.includes(id) ? '❤️' : '🤍';
+    }
+  });
+}
+
+  </script>
+</body>
+</html>
